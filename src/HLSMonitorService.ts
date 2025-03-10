@@ -2,20 +2,42 @@ import Fastify from "fastify";
 import { HLSMonitor } from "./HLSMonitor";
 import { ErrorType } from "./HLSMonitor";
 import { State } from "./HLSMonitor";
+import pino from "pino";
 
 export class HLSMonitorService {
   private fastify: any;
   private hlsMonitors = new Map<string, HLSMonitor>();
+  private logger: pino.Logger;
 
   constructor() {
+    // Configure Pino logger
+    this.logger = pino({
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'HH:MM:ss.l',
+          ignore: 'pid,hostname',
+        }
+      },
+      level: process.env.LOG_LEVEL || 'info' // Can be one of 'fatal', 'error', 'warn', 'info', 'debug', 'trace'
+    });
+
     this.fastify = Fastify({
-      logger: true,
+      logger: this.logger, // Use Pino logger for Fastify
       ignoreTrailingSlash: true,
     });
   }
 
   get monitors() {
     return this.hlsMonitors;
+  }
+
+  /**
+   * Get access to the logger
+   */
+  get log() {
+    return this.logger;
   }
 
   private isValidUrl(urlString: string): boolean {
@@ -28,6 +50,8 @@ export class HLSMonitorService {
   }
 
   private async routes() {
+    this.logger.debug('Registering API routes');
+    
     this.fastify.register(require("fastify-swagger"), {
       routePrefix: "/docs",
       swagger: {
@@ -214,6 +238,7 @@ export class HLSMonitorService {
     }, 
     async (request, reply) => {
       const body = request.body;
+      this.logger.debug({ body }, 'POST /monitor request received');
         
       // Validate URLs
       const invalidUrls = body.streams
@@ -221,6 +246,7 @@ export class HLSMonitorService {
         .filter(url => !this.isValidUrl(url));
 
       if (invalidUrls.length > 0) {
+        this.logger.warn({ invalidUrls }, 'Invalid URLs detected in monitor request');
         reply.code(400).send({
           status: "error",
           message: `Invalid URLs detected: ${invalidUrls.join(', ')}`
@@ -232,6 +258,7 @@ export class HLSMonitorService {
       const urls = body.streams.map(s => typeof s === 'string' ? s : s.url);
       const uniqueUrls = [...new Set(urls)];
       if (uniqueUrls.length !== urls.length) {
+        this.logger.warn('Duplicate stream URLs detected in monitor request');
         reply.code(400).send({
           status: "error",
           message: "Duplicate stream URLs are not allowed within the same monitor"
@@ -250,6 +277,9 @@ export class HLSMonitorService {
       monitor = new HLSMonitor(body["streams"], monitorOptions);
       monitor.create();
       this.hlsMonitors.set(monitor.monitorId, monitor);
+      
+      this.logger.info({ monitorId: monitor.monitorId }, 'Created new HLS monitor');
+      
       const rep = {
         status: "Created a new hls-monitor",
         streams: body["streams"],
@@ -632,7 +662,11 @@ export class HLSMonitorService {
       }
     }, 
     async (request, reply) => {
-      if (!this.hlsMonitors.has(request.params.monitorId)) {
+      const monitorId = request.params.monitorId;
+      this.logger.debug({ monitorId }, 'DELETE /monitor/:monitorId request received');
+      
+      if (!this.hlsMonitors.has(monitorId)) {
+        this.logger.warn({ monitorId }, 'Attempt to delete non-existent monitor');
         reply.code(404).send({
           status: "error",
           message: "Monitor not found"
@@ -640,17 +674,20 @@ export class HLSMonitorService {
         return;
       }
 
-      const monitor = this.hlsMonitors.get(request.params.monitorId);
+      const monitor = this.hlsMonitors.get(monitorId);
       monitor.setState(State.INACTIVE); // Stop the monitor
-      this.hlsMonitors.delete(request.params.monitorId); // Remove from map
+      this.hlsMonitors.delete(monitorId); // Remove from map
 
+      this.logger.info({ monitorId }, 'Monitor stopped and deleted successfully');
+      
       reply.code(200).send({
         message: "Monitor stopped and deleted successfully",
-        monitorId: request.params.monitorId
+        monitorId: monitorId
       });
     });
 
     this.fastify.get("/metrics", async (request, reply) => {
+      this.logger.debug('GET /metrics request received');
       let output = [];
       
       // Monitor info metric
@@ -664,6 +701,8 @@ export class HLSMonitorService {
       // Monitor state metric (as a stateset)
       output.push('# TYPE hls_monitor_state stateset');
       output.push('# HELP hls_monitor_state Current state of the HLS monitor');
+      
+      this.logger.debug({ monitorCount: this.hlsMonitors.size }, 'Generating metrics for monitors');
       
       for (const [monitorId, monitor] of this.hlsMonitors.entries()) {
         const state = monitor.getState();
@@ -866,10 +905,10 @@ export class HLSMonitorService {
     await this.routes();
     this.fastify.listen(port, host, (err, address) => {
       if (err) {
-        console.error(err);
+        this.logger.error(err, 'Error starting server');
         throw err;
       }
-      console.log(`Server is now listening on ${address}`);
+      this.logger.info(`Server is now listening on ${address}`);
     });
   }
 }
