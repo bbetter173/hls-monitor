@@ -6,7 +6,9 @@
     "resolveJsonModule": true /* Enable importing .json files */,
     "sourceMap": true /* Create source map files for emitted JavaScript files. */,
     "outDir": "./dist" /* Specify an output folder for all emitted files. */,
-    "esModuleInterop": true /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */
+    "esModuleInterop": true /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables `allowSyntheticDefaultImports` for type compatibility. */,
+    "skipLibCheck": true,
+    "lib": ["ES2020", "DOM"]
   },
   "exclude": ["node_modules", "spec", "example.js"]
 }
